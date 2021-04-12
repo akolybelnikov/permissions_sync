@@ -1,4 +1,4 @@
-module psync
+module source.cloud.google.com/mcp-playground-96459/psync
 
 go 1.15
 
