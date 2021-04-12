@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"github.com/okta/okta-sdk-golang/v2/okta"
 	"github.com/okta/okta-sdk-golang/v2/okta/query"
-	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/xanzy/go-gitlab"
 	secretmanagerpb "google.golang.org/genproto/googleapis/cloud/secretmanager/v1"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -28,11 +28,15 @@ func Psync(w http.ResponseWriter, r *http.Request) {
 	// Create the GCP client
 	gcpCtx := context.Background()
 	gcpClient, err := secretmanager.NewClient(gcpCtx)
-	cobra.CheckErr(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	req := &secretmanagerpb.AccessSecretVersionRequest{Name: viper.GetString("OKTA_SECRET")}
 	oktaToken, err := gcpClient.AccessSecretVersion(gcpCtx, req)
-	cobra.CheckErr(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Initialize Okta Client
 	ctx, client, err := okta.NewClient(context.Background(),
@@ -40,19 +44,27 @@ func Psync(w http.ResponseWriter, r *http.Request) {
 		okta.WithToken(string(oktaToken.Payload.Data)),
 		okta.WithRequestTimeout(45),
 		okta.WithRateLimitMaxRetries(3))
-	cobra.CheckErr(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	req = &secretmanagerpb.AccessSecretVersionRequest{Name: viper.GetString("GITLAB_SECRET")}
 	gitlabToken, err := gcpClient.AccessSecretVersion(gcpCtx, req)
-	cobra.CheckErr(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Initialize Gitlab Client
 	gitlabClt, err := gitlab.NewClient(string(gitlabToken.Payload.Data))
-	cobra.CheckErr(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Fetch the group members of the Okta groups that start with dev_
 	oktaGroups, err := getOktaDevGroups(ctx, client)
-	cobra.CheckErr(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Fetch Gitlab group AFKL-MCP members with access level < 50
 	afklMembers, _ := getGitlabGroupMembers(gitlabClt, "AFKL-MCP")
@@ -91,7 +103,9 @@ func Psync(w http.ResponseWriter, r *http.Request) {
 						UserID:      &y.ID,
 						AccessLevel: &perm,
 					})
-					cobra.CheckErr(err)
+					if err != nil {
+						log.Fatal(err)
+					}
 					fmt.Printf("%+v", mem)
 					if mem.GroupSAMLIdentity != nil {
 						fmt.Printf("%+v", mem.GroupSAMLIdentity)
@@ -107,12 +121,16 @@ func getOktaDevGroups(ctx context.Context, ctl *okta.Client) (groups []oktaGroup
 	oktaGroups, _, err := ctl.Group.ListGroups(ctx, &query.Params{
 		Q: "dev_",
 	})
-	cobra.CheckErr(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 	for _, g := range oktaGroups {
 		gr := oktaGroup{ID: g.Id, Name: strings.Split(g.Profile.Name, "dev_")[1], Users: []string{}}
 		// Fetch and store the group users
 		users, _, err := ctl.Group.ListGroupUsers(ctx, g.Id, nil)
-		cobra.CheckErr(err)
+		if err != nil {
+			log.Fatal(err)
+		}
 
 		for _, u := range users {
 			gr.Users = append(gr.Users, u.Id)
@@ -127,14 +145,18 @@ func getGitlabGroupMembers(clt *gitlab.Client, name string) (members []*gitlab.G
 	groups, _, err := clt.Groups.ListGroups(&gitlab.ListGroupsOptions{
 		Search: &name,
 	})
-	cobra.CheckErr(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 	// Gitlab search returns a slice of len 1, so we take the ID of the 0 element
 	id = groups[0].ID
 	// List the group members
 	users, _, err := clt.Groups.ListAllGroupMembers(id, &gitlab.ListGroupMembersOptions{
 		ListOptions: gitlab.ListOptions{PerPage: 100},
 	})
-	cobra.CheckErr(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 	// Take only those with developer access level or less
 	for _, u := range users {
 		if u.AccessLevel < 50 {
