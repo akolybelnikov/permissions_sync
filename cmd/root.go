@@ -10,7 +10,7 @@ import (
 	"os"
 	"strings"
 
-	homedir "github.com/mitchellh/go-homedir"
+	"github.com/mitchellh/go-homedir"
 	"github.com/spf13/viper"
 )
 
@@ -43,21 +43,22 @@ var rootCmd = &cobra.Command{
 		cobra.CheckErr(err)
 
 		// Fetch the group members of the Okta groups that start with dev_
-		oktaGroups, err := getOktaDevGroups(ctx, client)
+		oktaGroups, err := GetOktaDevGroups(ctx, client)
 		cobra.CheckErr(err)
 
 		// Fetch Gitlab group AFKL-MCP members with access level < 50
-		afklMembers, _ := getGitlabGroupMembers(gitlabClt, "AFKL-MCP")
-		// Parse out afkl-mcp group members identity
+		afklMembers, _ := GetGitlabGroupMembers(gitlabClt, "AFKL-MCP")
+		// Parse out afkl-mcp group members identities
 		afklUids := make([]string, len(afklMembers))
 		for i, m := range afklMembers {
-			afklUids[i] = m.GroupSAMLIdentity.ExternUID
+			if m.GroupSAMLIdentity != nil {
+				afklUids[i] = m.GroupSAMLIdentity.ExternUID
+			}
 		}
 
 		for _, g := range oktaGroups {
-			// Fetch Gitlab developer group members
-			// Find each member in afkl-mcp group and extract the identity
-			glabgroup, grID := getGitlabGroupMembers(gitlabClt, g.Name)
+			// Fetch Gitlab dev group members, find each member in afkl-mcp group and extract their identity
+			glabgroup, grID := GetGitlabGroupMembers(gitlabClt, g.Name)
 			glabgroupUids := make([]string, 0, len(glabgroup))
 			for _, glm := range glabgroup {
 				for _, v := range afklMembers {
@@ -91,8 +92,8 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-// List only okta groups with dev_ in the name
-func getOktaDevGroups(ctx context.Context, ctl *okta.Client) (groups []OktaGroup, err error) {
+// GetOktaDevGroups finds and returns only the okta groups with dev_ in the name
+func GetOktaDevGroups(ctx context.Context, ctl *okta.Client) (groups []OktaGroup, err error) {
 	oktaGroups, _, err := ctl.Group.ListGroups(ctx, &query.Params{
 		Q: "dev_",
 	})
@@ -111,7 +112,9 @@ func getOktaDevGroups(ctx context.Context, ctl *okta.Client) (groups []OktaGroup
 	return
 }
 
-func getGitlabGroupMembers(clt *gitlab.Client, name string) (members []*gitlab.GroupMember, id int) {
+// GetGitlabGroupMembers given a (part of) group name finds the group in Gitlab.
+// Returns the group members and the group ID.
+func GetGitlabGroupMembers(clt *gitlab.Client, name string) (members []*gitlab.GroupMember, id int) {
 	groups, _, err := clt.Groups.ListGroups(&gitlab.ListGroupsOptions{
 		Search: &name,
 	})
@@ -132,8 +135,8 @@ func getGitlabGroupMembers(clt *gitlab.Client, name string) (members []*gitlab.G
 	return
 }
 
-// Intersection of two sets
-// Used to identify which group members exist both in an okta group and afkl-mcp group
+// Intersection returns the intersection of two sets.
+// Used to identify which group members exist both in the okta developers group and the afkl-mcp group.
 func Intersection(a, b []string) (c []string) {
 	m := make(map[string]bool)
 
@@ -149,8 +152,8 @@ func Intersection(a, b []string) (c []string) {
 	return
 }
 
-// Difference of two sets
-// Used to identify which users in the afkl-mcp group haven't been granted access to the given dev group
+// Difference returns the difference of two sets.
+// Used to identify which users in the afkl-mcp group haven't been granted access to the given dev group in Gitlab.
 func Difference(a, b []string) (c []string) {
 	m := make(map[string]bool)
 
