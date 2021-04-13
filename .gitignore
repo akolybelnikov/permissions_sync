@@ -21,6 +21,9 @@
 # Executable binary, built with go build
 psync
 
-# Config secrets
-config.yaml
+# Env secrets
 .env.yaml
+
+# Go mod
+go.mod
+go.sum
