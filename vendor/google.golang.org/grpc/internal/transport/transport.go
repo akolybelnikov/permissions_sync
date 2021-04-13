@@ -241,7 +241,6 @@ type Stream struct {
 	ctx          context.Context    // the associated context of the stream
 	cancel       context.CancelFunc // always nil for client side Stream
 	done         chan struct{}      // closed at the end of stream to unblock writers. On the client side.
-	doneFunc     func()             // invoked at the end of stream on client side.
 	ctxDone      <-chan struct{}    // same as done chan but for server side. Cache of ctx.Done() (for performance)
 	method       string             // the associated RPC method of the stream
 	recvCompress string
@@ -570,8 +569,6 @@ type ConnectOptions struct {
 	ChannelzParentID int64
 	// MaxHeaderListSize sets the max (uncompressed) size of header list that is prepared to be received.
 	MaxHeaderListSize *uint32
-	// UseProxy specifies if a proxy should be used.
-	UseProxy bool
 }
 
 // NewClientTransport establishes the transport with the required ConnectOptions
@@ -612,8 +609,6 @@ type CallHdr struct {
 	ContentSubtype string
 
 	PreviousAttempts int // value of grpc-previous-rpc-attempts header to set
-
-	DoneFunc func() // called when the stream is finished
 }
 
 // ClientTransport is the common interface for all gRPC client-side transport

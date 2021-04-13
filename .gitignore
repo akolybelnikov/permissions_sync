@@ -23,7 +23,3 @@ psync
 
 # Env secrets
 .env.yaml
-
-# Go mod
-go.mod
-go.sum
