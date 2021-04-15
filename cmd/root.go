@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	"context"
 	"fmt"
 	"github.com/okta/okta-sdk-golang/v2/okta"
 	"github.com/okta/okta-sdk-golang/v2/okta/query"
 	"github.com/spf13/cobra"
 	"github.com/xanzy/go-gitlab"
+	secretmanagerpb "google.golang.org/genproto/googleapis/cloud/secretmanager/v1"
+	"log"
 	"os"
 	"strings"
 
@@ -17,9 +20,15 @@ import (
 var cfgFile string
 
 type OktaGroup struct {
-	ID    string
-	Name  string
-	Users []string
+	ID            string
+	Name          string
+	Users         []string
+	Deprovisioned []string
+}
+
+type GitlabMember struct {
+	User *gitlab.GroupMember
+	SAMLID string
 }
 
 // rootCmd represents the base command when called without any subcommands
@@ -28,18 +37,33 @@ var rootCmd = &cobra.Command{
 	Short: "Sync Okta groups permissions",
 	Long:  `Automatically assign new groupMembers Gitlab groups permissions based on their Okta profile`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// Create the GCP client
+		gcpCtx := context.Background()
+		gcpClient, err := secretmanager.NewClient(gcpCtx)
+		if err != nil {
+			log.Fatal(err)
+		}
+		req := &secretmanagerpb.AccessSecretVersionRequest{Name: viper.GetString("OKTA_SECRET")}
+		oktaToken, err := gcpClient.AccessSecretVersion(gcpCtx, req)
+		if err != nil {
+			log.Fatal(err)
+		}
 		// Initialize Okta Client
 		ctx, client, err := okta.NewClient(context.Background(),
-			okta.WithOrgUrl(viper.GetString("okta.client.orgUrl")),
-			okta.WithToken(viper.GetString("okta.client.token")),
-			okta.WithRequestTimeout(viper.GetInt64("okta.client.requestTimeout")),
-			okta.WithRateLimitMaxRetries(viper.GetInt32("okta.client.rateLimit.maxRetries")))
+			okta.WithOrgUrl(viper.GetString("OKTA_ORG_URL")),
+			okta.WithToken(string(oktaToken.Payload.Data)),
+			okta.WithRequestTimeout(45),
+			okta.WithRateLimitMaxRetries(3))
 		cobra.CheckErr(err)
 
+		req = &secretmanagerpb.AccessSecretVersionRequest{Name: viper.GetString("GITLAB_SECRET")}
+		gitlabToken, err := gcpClient.AccessSecretVersion(gcpCtx, req)
+		if err != nil {
+			log.Fatal(err)
+		}
+
 		// Initialize Gitlab Client
-		gitlabClt, err := gitlab.NewBasicAuthClient(viper.GetString("gitlab.username"),
-			viper.GetString("gitlab.password"),
-			gitlab.WithBaseURL(viper.GetString("gitlab.baseUrl")))
+		gitlabClt, err := gitlab.NewClient(string(gitlabToken.Payload.Data))
 		cobra.CheckErr(err)
 
 		// Fetch the group members of the Okta groups that start with dev_
@@ -56,23 +80,37 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
+		fmt.Println("Syncing okta dev_ groups ...")
+
 		for _, g := range oktaGroups {
 			// Fetch Gitlab dev group members, find each member in afkl-mcp group and extract their identity
 			glabgroup, grID := GetGitlabGroupMembers(gitlabClt, g.Name)
+			glabgroupMembers := make([]GitlabMember, 0, len(glabgroup))
 			glabgroupUids := make([]string, 0, len(glabgroup))
 			for _, glm := range glabgroup {
 				for _, v := range afklMembers {
+					// Check if SAML identity is not nil. If it is, something went wrong when user was added to AFKL group
+					// Users without a SAML identity cannot be matched with Okta users (!)
 					if v.ID == glm.ID && v.GroupSAMLIdentity != nil {
 						glabgroupUids = append(glabgroupUids, v.GroupSAMLIdentity.ExternUID)
+						glabgroupMembers = append(glabgroupMembers, GitlabMember{
+							User:   glm,
+							SAMLID: v.GroupSAMLIdentity.ExternUID,
+						})
 					}
 				}
 			}
 			// Identify Okta group members that are part of AFKL-MCP Gitlab group
-			intersect := Intersection(g.Users, afklUids)
+			oktaUsersInGitlab := Intersection(g.Users, afklUids)
 			// Find the members who are not assigned to the Gitlab developer group yet
-			diff := Difference(intersect, glabgroupUids)
+			usersToAdd := Difference(oktaUsersInGitlab, glabgroupUids)
+			if len(usersToAdd) > 0 {
+				fmt.Printf("Adding %d members to %s:\n", len(usersToAdd), g.Name)
+			} else {
+				fmt.Printf("No members to add to %s.\n", g.Name)
+			}
 			// Assign the users to the Gitlab dev group with developer permissions level
-			for _, x := range diff {
+			for _, x := range usersToAdd {
 				var perm = gitlab.DeveloperPermissions
 				for _, y := range afklMembers {
 					if x == y.GroupSAMLIdentity.ExternUID {
@@ -81,14 +119,29 @@ var rootCmd = &cobra.Command{
 							AccessLevel: &perm,
 						})
 						cobra.CheckErr(err)
-						fmt.Printf("%+v", mem)
-						if mem.GroupSAMLIdentity != nil {
-							fmt.Printf("%+v", mem.GroupSAMLIdentity)
-						}
+						fmt.Printf("Added %+v\n", mem)
+					}
+				}
+			}
+			// Find deprovisioned or suspended Okta group users who still have access to the Gitlab group
+			usersToRemove := Intersection(g.Deprovisioned, glabgroupUids)
+			if len(usersToRemove) > 0 {
+				fmt.Printf("Removing %d members from %s:\n", len(usersToRemove), g.Name)
+			} else {
+				fmt.Printf("No members to remove from %s.\n", g.Name)
+			}
+			// Remove deprovisioned or suspended users from the gitlab dev group
+			for _, id := range usersToRemove {
+				for _, member := range glabgroupMembers {
+					if id == member.SAMLID {
+						_, err := gitlabClt.GroupMembers.RemoveGroupMember(grID, member.User.ID)
+						cobra.CheckErr(err)
+						fmt.Printf("Removed %+v\n", member.User)
 					}
 				}
 			}
 		}
+		fmt.Println("Sync completed successfully.")
 	},
 }
 
@@ -99,13 +152,18 @@ func GetOktaDevGroups(ctx context.Context, ctl *okta.Client) (groups []OktaGroup
 	})
 	cobra.CheckErr(err)
 	for _, g := range oktaGroups {
-		gr := OktaGroup{ID: g.Id, Name: strings.Split(g.Profile.Name, "dev_")[1], Users: []string{}}
+		gr := OktaGroup{ID: g.Id, Name: strings.Split(g.Profile.Name, "dev_")[1], Users: []string{}, Deprovisioned: []string{}}
 		// Fetch and store the group users
 		users, _, err := ctl.Group.ListGroupUsers(ctx, g.Id, nil)
 		cobra.CheckErr(err)
 
 		for _, u := range users {
-			gr.Users = append(gr.Users, u.Id)
+			if u.Status == "DEPROVISIONED" || u.Status == "SUSPENDED" {
+				gr.Deprovisioned = append(gr.Deprovisioned, u.Id)
+			} else {
+				gr.Users = append(gr.Users, u.Id)
+			}
+
 		}
 		groups = append(groups, gr)
 	}
@@ -177,7 +235,7 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(initConfig)
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "config.yaml", "config file (default is $HOME/.psync.yaml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", ".env.yaml", "config file (default is $HOME/.psync.yaml)")
 
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.

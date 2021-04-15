@@ -3,6 +3,7 @@ module psync
 go 1.16
 
 require (
+	cloud.google.com/go v0.65.0
 	github.com/fsnotify/fsnotify v1.4.9 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/magiconair/properties v1.8.5 // indirect
@@ -20,5 +21,6 @@ require (
 	golang.org/x/oauth2 v0.0.0-20210402161424-2e8d93401602 // indirect
 	golang.org/x/sys v0.0.0-20210403161142-5e06dd20ab57 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
+	google.golang.org/genproto v0.0.0-20200825200019-8632dd797987
 	gopkg.in/ini.v1 v1.62.0 // indirect
 )
