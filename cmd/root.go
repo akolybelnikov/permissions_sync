@@ -101,9 +101,9 @@ var rootCmd = &cobra.Command{
 				}
 			}
 			// Identify Okta group members that are part of AFKL-MCP Gitlab group
-			oktaUsersInGitlab := Intersection(g.Users, afklUids)
+			oktaUsersInGitlab := getSetIntersection(g.Users, afklUids)
 			// Find the members who are not assigned to the Gitlab developer group yet
-			usersToAdd := Difference(oktaUsersInGitlab, glabgroupUids)
+			usersToAdd := getSetDifference(oktaUsersInGitlab, glabgroupUids)
 			if len(usersToAdd) > 0 {
 				fmt.Printf("Adding %d members to %s:\n", len(usersToAdd), g.Name)
 			} else {
@@ -124,7 +124,7 @@ var rootCmd = &cobra.Command{
 				}
 			}
 			// Find deprovisioned or suspended Okta group users who still have access to the Gitlab group
-			usersToRemove := Intersection(g.Deprovisioned, glabgroupUids)
+			usersToRemove := getSetIntersection(g.Deprovisioned, glabgroupUids)
 			if len(usersToRemove) > 0 {
 				fmt.Printf("Removing %d members from %s:\n", len(usersToRemove), g.Name)
 			} else {
@@ -193,9 +193,9 @@ func GetGitlabGroupMembers(clt *gitlab.Client, name string) (members []*gitlab.G
 	return
 }
 
-// Intersection returns the intersection of two sets.
+// getSetIntersection returns the intersection of two sets.
 // Used to identify which group members exist both in the okta developers group and the afkl-mcp group.
-func Intersection(a, b []string) (c []string) {
+func getSetIntersection(a, b []string) (c []string) {
 	m := make(map[string]bool)
 
 	for _, item := range a {
@@ -210,9 +210,9 @@ func Intersection(a, b []string) (c []string) {
 	return
 }
 
-// Difference returns the difference of two sets.
+// getSetDifference returns the difference of two sets.
 // Used to identify which users in the afkl-mcp group haven't been granted access to the given dev group in Gitlab.
-func Difference(a, b []string) (c []string) {
+func getSetDifference(a, b []string) (c []string) {
 	m := make(map[string]bool)
 
 	for _, item := range b {
