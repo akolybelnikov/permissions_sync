@@ -22,4 +22,4 @@
 psync
 
 # Config secrets
-config.yaml
+.env.yaml
